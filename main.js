@@ -4,9 +4,11 @@
     // ============================================================
     // Chat Capture - Instagram DM 实时聊天记录捕捉器 v3
     //
-    // 发送方判断（核心修复）：
-    //   对方消息 → 有 a[aria-label^="Open the profile page"]（头像链接）
-    //   我的消息 → 有 role="presentation" 但没有头像链接
+    // 发送方判断（多策略组合）：
+    //   1. 有头像链接 a[aria-label^="Open the profile page"] → 对方
+    //   2. role="presentation" 含 class x88qbow → 对方
+    //   3. role="presentation" 含 class x5slmwz → 我
+    //   4. 有 role="presentation" 但无上述特征 → 我（fallback）
     //
     // 虚拟滚动适配：
     //   只处理 opacity:1 的可见消息，忽略 opacity:0 的占位符
@@ -59,14 +61,28 @@
         return messages;
     }
 
-    // --- 判断发送方（核心修复）---
+    // --- 判断发送方（多策略组合）---
     function parseSender(element) {
-        // 对方消息的标志：有头像链接
+        // 策略1：头像链接（群聊或显示头像的私聊）
         var profileLink = element.querySelector('a[aria-label^="Open the profile page"]');
         if (profileLink) return '对方';
-        // 我的消息：有 role="presentation" 但没有头像链接
+
+        // 策略2：presentation 元素的 class 名
         var presentation = element.querySelector('[role="presentation"]');
-        if (presentation) return '我';
+        if (presentation) {
+            var cls = presentation.className;
+            if (cls.indexOf('x88qbow') !== -1) return '对方';
+            if (cls.indexOf('x5slmwz') !== -1) return '我';
+            // fallback：有 presentation 但没有已知 class，默认为我
+            return '我';
+        }
+
+        // 策略3：没有 presentation 也没有头像链接
+        // 视频分享/图片等多媒体消息可能没有 presentation
+        // 判断依据：对方消息一定有头像链接或 x88qbow，没有的就是我的
+        var hasContent = element.querySelector('[role="group"]');
+        if (hasContent) return '我';
+
         return null;
     }
 
