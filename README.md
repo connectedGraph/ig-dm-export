@@ -2,7 +2,7 @@
 
 [English](#english) | [中文](#中文)
 
-**Install from Greasy Fork:** [https://greasyfork.org/scripts/578524](https://greasyfork.org/scripts/578524)
+**Install from Greasy Fork:** [https://greasyfork.org/scripts/578524(https://greasyfork.org/scripts/578524)
 
 ---
 
@@ -12,16 +12,29 @@
 
 一个浏览器端的 Instagram DM 聊天记录实时捕捉工具。粘贴到控制台即可运行，通过悬浮面板实时展示捕获进度，支持选择性剔除、复制和下载。
 
+支持文本、图片、语音消息、视频/Reels 分享等多种消息类型。
+
 同时也是一个**数据结构练手项目**——用真实场景演示 WeakSet、Map、有序数组重建等结构如何协作解决实际问题。
 
 ### 功能
 
 - 实时捕获：MutationObserver 监听 DOM 变化，滚动即捕获
+- 多媒体识别：自动区分文本 💬、图片 🖼️、语音 🎤、视频分享 🎬
 - 可选剔除：每条消息带 checkbox，取消勾选即排除在导出之外
 - 四种导出：复制 JSON / 复制纯文本 / 下载 .json / 下载 .txt
 - 悬浮面板：可拖拽、可最小化，不会被误关
 - 双向滚动：向上翻历史、向下翻新消息，都能正确排序
 - 真实重复保留：相同文本的不同消息不会被错误去重
+
+### 支持的消息类型
+
+| 类型 | 识别方式 | 导出内容 |
+|------|---------|---------|
+| 文本 | 默认 | 原文 |
+| 图片 | `img` 标签 (尺寸 > 50px) | `[图片]` + 图片 URL |
+| 语音 | `svg[aria-label="Waveform for audio message"]` | `[语音消息 0:02]` + 时长 |
+| 视频/Reels 分享 | `svg[aria-label="片段"]` | `[分享视频 from @user]` + 封面 URL |
+| 图片+文字 | 同时有大图和文本 | 文字 + `[图片x1]` + URL |
 
 ### 使用方式
 
@@ -36,10 +49,35 @@
 
 ```javascript
 chatCapture.scan()      // 手动触发一次扫描
-chatCapture.getData()   // 获取过滤后的数据数组
+chatCapture.getData()   // 获取过滤后的数据数组（含 type 和 media 字段）
 chatCapture.getAll()    // 获取全部数据（含被剔除的）
 chatCapture.getCount()  // 当前捕获总条数
 chatCapture.stop()      // 停止监听
+```
+
+### 导出格式示例
+
+JSON 格式：
+
+```json
+[
+  { "sender": "我", "type": "text", "text": "你好" },
+  { "sender": "对方", "type": "image", "text": "[图片]", "media": ["https://...jpg"] },
+  { "sender": "我", "type": "audio", "text": "[语音消息 0:05]" },
+  { "sender": "对方", "type": "shared_video", "text": "[分享视频 from @username]", "media": "https://...jpg" }
+]
+```
+
+纯文本格式：
+
+```
+我: 你好
+
+对方: [图片]
+
+我: [语音消息 0:05]
+
+对方: [分享视频 from @username]
 ```
 
 ### 数据结构设计
@@ -80,7 +118,7 @@ positionMap: { Node_A→0, Node_B→1, Node_C→2, Node_D→3 }
 #### 3. 有序数组 + 重建排序 —— 处理双向插入
 
 ```
-orderedLog: Array<{ node, sender, text, domIndex }>
+orderedLog: Array<{ node, sender, type, text, media, domIndex }>
 ```
 
 **问题：** 向上翻滚时新消息出现在 DOM 前面，向下翻时出现在后面。简单的 push 无法保证顺序。
@@ -116,7 +154,19 @@ excluded: Set<number>
 
 选择 Set 而非数组的原因：`has()` 查找是 O(1)，导出时对每条消息做一次判断，总体 O(m)。
 
-#### 5. MutationObserver + 防抖 —— 事件驱动
+#### 5. 多媒体解析策略 —— 优先级匹配
+
+```
+parseContent(container):
+  1. 检测语音 → svg[aria-label="Waveform..."] → 提取时长
+  2. 检测视频分享 → svg[aria-label="片段"] → 提取作者 + 封面
+  3. 检测图片 → img[height>50][width>50] → 收集 URL
+  4. 兜底纯文本 → innerText
+```
+
+检测顺序有讲究：语音消息的 DOM 中也包含小图标，如果先检测图片会误判。所以优先匹配特征最明确的类型（语音有波形 SVG，视频有片段 SVG），最后才 fallback 到图片和纯文本。
+
+#### 6. MutationObserver + 防抖 —— 事件驱动
 
 ```
 observer → DOM 变化 → 300ms 防抖 → scan()
@@ -124,7 +174,7 @@ observer → DOM 变化 → 300ms 防抖 → scan()
 
 不用定时器轮询，不用监听滚动事件（Instagram 的滚动容器不是 document）。直接观察 DOM 子树变化，有新节点插入就触发扫描。防抖避免虚拟滚动批量更新时重复扫描。
 
-#### 6. 导出：三层 Fallback + 文件下载
+#### 7. 导出：三层 Fallback + 文件下载
 
 ```
 复制路径:
@@ -152,8 +202,9 @@ observer → DOM 变化 → 300ms 防抖 → scan()
 │                                                  │
 │  1. querySelectorAll 获取当前所有消息节点          │
 │  2. 逐个检查 WeakSet → 跳过已处理 / 记录新节点    │
-│  3. 新节点 push 进 orderedLog                     │
-│  4. 调用 rebuildOrder()                          │
+│  3. parseContent() 识别消息类型和媒体资源         │
+│  4. 新节点 push 进 orderedLog                     │
+│  5. 调用 rebuildOrder()                          │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
@@ -169,8 +220,8 @@ observer → DOM 变化 → 300ms 防抖 → scan()
 ┌─────────────────────────────────────────────────┐
 │         renderList() + 导出                       │
 │                                                  │
-│  渲染时: orderedLog 逐条生成 checkbox + 文本      │
-│  导出时: 过滤 excluded Set → JSON / TXT          │
+│  渲染时: orderedLog 逐条生成 checkbox + 类型图标   │
+│  导出时: 过滤 excluded Set → JSON(含media) / TXT  │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -179,6 +230,7 @@ observer → DOM 变化 → 300ms 防抖 → scan()
 | 操作 | 时间复杂度 | 说明 |
 |------|-----------|------|
 | 单次扫描 | O(n) | n = 当前 DOM 中的消息节点数 |
+| parseContent | O(k) | k = 单个消息容器内的子元素数（通常很小） |
 | WeakSet 查找 | O(1) | 哈希结构 |
 | Map 构建 | O(n) | 遍历当前 DOM 节点 |
 | rebuildOrder | O(m log m) | m = 累计捕获的消息总数 |
@@ -189,8 +241,10 @@ observer → DOM 变化 → 300ms 防抖 → scan()
 ### 局限性
 
 - 依赖 Instagram 当前的 DOM 结构（class 名 `x5slmwz` / `x88qbow`），页面改版后需要更新选择器
+- 多媒体识别依赖 SVG 的 `aria-label` 属性，Instagram 国际化可能导致标签文字变化
 - 虚拟滚动回收的节点如果被 GC，WeakSet 中的记录会消失——但不影响已存入 orderedLog 的数据
 - 需要用户手动滚动完整个对话才能拿到全部记录
+- 图片/视频的 URL 是 CDN 临时链接，可能过期
 
 ---
 
@@ -200,16 +254,29 @@ observer → DOM 变化 → 300ms 防抖 → scan()
 
 A browser-based real-time Instagram DM chat capture tool. Paste into the console to run, with a floating panel showing capture progress in real time. Supports selective exclusion, clipboard copy, and file download.
 
+Supports text, images, voice messages, and video/Reels shares.
+
 Also a **data structure practice project** — demonstrating how WeakSet, Map, sorted arrays, and Set work together to solve real-world problems.
 
 ### Features
 
 - Real-time capture: MutationObserver watches DOM changes, captures on scroll
+- Multimedia recognition: Auto-detects text 💬, images 🖼️, voice 🎤, video shares 🎬
 - Selective exclusion: Each message has a checkbox, uncheck to exclude from export
 - Four export modes: Copy JSON / Copy plain text / Download .json / Download .txt
 - Floating panel: Draggable, minimizable, cannot be accidentally destroyed
 - Bidirectional scroll: Scrolling up for history or down for new messages both sort correctly
 - True duplicate preservation: Identical text from different messages won't be incorrectly deduplicated
+
+### Supported Message Types
+
+| Type | Detection | Export Content |
+|------|-----------|---------------|
+| Text | Default | Original text |
+| Image | `img` tag (size > 50px) | `[图片]` + image URL |
+| Voice | `svg[aria-label="Waveform for audio message"]` | `[语音消息 0:02]` + duration |
+| Video/Reels share | `svg[aria-label="片段"]` | `[分享视频 from @user]` + thumbnail URL |
+| Image + text | Both large image and text present | text + `[图片x1]` + URL |
 
 ### Usage
 
@@ -224,10 +291,35 @@ Console API:
 
 ```javascript
 chatCapture.scan()      // Manually trigger a scan
-chatCapture.getData()   // Get filtered data array
+chatCapture.getData()   // Get filtered data array (includes type and media fields)
 chatCapture.getAll()    // Get all data (including excluded)
 chatCapture.getCount()  // Total captured count
 chatCapture.stop()      // Stop observing
+```
+
+### Export Format Examples
+
+JSON:
+
+```json
+[
+  { "sender": "我", "type": "text", "text": "Hello" },
+  { "sender": "对方", "type": "image", "text": "[图片]", "media": ["https://...jpg"] },
+  { "sender": "我", "type": "audio", "text": "[语音消息 0:05]" },
+  { "sender": "对方", "type": "shared_video", "text": "[分享视频 from @username]", "media": "https://...jpg" }
+]
+```
+
+Plain text:
+
+```
+我: Hello
+
+对方: [图片]
+
+我: [语音消息 0:05]
+
+对方: [分享视频 from @username]
 ```
 
 ### Data Structure Design
@@ -268,7 +360,7 @@ positionMap: { Node_A→0, Node_B→1, Node_C→2, Node_D→3 }
 #### 3. Sorted Array + Rebuild — Handling Bidirectional Insertion
 
 ```
-orderedLog: Array<{ node, sender, text, domIndex }>
+orderedLog: Array<{ node, sender, type, text, media, domIndex }>
 ```
 
 **Problem:** Scrolling up inserts new messages at the top of the DOM; scrolling down inserts at the bottom. A simple push cannot guarantee order.
@@ -304,7 +396,19 @@ Messages unchecked by the user have their orderedLog index added to excluded. Ex
 
 Why Set over Array: `has()` lookup is O(1). During export, one check per message, O(m) total.
 
-#### 5. MutationObserver + Debounce — Event-driven
+#### 5. Multimedia Parsing Strategy — Priority Matching
+
+```
+parseContent(container):
+  1. Detect voice → svg[aria-label="Waveform..."] → extract duration
+  2. Detect video share → svg[aria-label="片段"] → extract author + thumbnail
+  3. Detect image → img[height>50][width>50] → collect URLs
+  4. Fallback to plain text → innerText
+```
+
+Detection order matters: voice message DOM also contains small icons — checking for images first would cause false positives. So we match the most distinctive features first (voice has waveform SVG, video has Reels SVG), then fall back to images and plain text.
+
+#### 6. MutationObserver + Debounce — Event-driven
 
 ```
 observer → DOM mutation → 300ms debounce → scan()
@@ -312,7 +416,7 @@ observer → DOM mutation → 300ms debounce → scan()
 
 No polling timers, no scroll event listeners (Instagram's scroll container isn't document). Directly observes DOM subtree changes — triggers scan when new nodes are inserted. Debounce prevents redundant scans during virtual scrolling batch updates.
 
-#### 6. Export: Triple Fallback + File Download
+#### 7. Export: Triple Fallback + File Download
 
 ```
 Copy path:
@@ -340,8 +444,9 @@ Download path:
 │                                                  │
 │  1. querySelectorAll for all message nodes       │
 │  2. Check WeakSet → skip processed / record new  │
-│  3. Push new nodes into orderedLog               │
-│  4. Call rebuildOrder()                           │
+│  3. parseContent() → identify type and media     │
+│  4. Push new nodes into orderedLog               │
+│  5. Call rebuildOrder()                           │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
@@ -357,8 +462,8 @@ Download path:
 ┌─────────────────────────────────────────────────┐
 │         renderList() + Export                     │
 │                                                  │
-│  Render: orderedLog → checkbox + text per entry  │
-│  Export: filter by excluded Set → JSON / TXT     │
+│  Render: orderedLog → checkbox + type icon        │
+│  Export: filter excluded Set → JSON(+media) / TXT│
 └─────────────────────────────────────────────────┘
 ```
 
@@ -367,6 +472,7 @@ Download path:
 | Operation | Time Complexity | Notes |
 |-----------|----------------|-------|
 | Single scan | O(n) | n = message nodes currently in DOM |
+| parseContent | O(k) | k = child elements in one message (usually small) |
 | WeakSet lookup | O(1) | Hash structure |
 | Map construction | O(n) | Iterate current DOM nodes |
 | rebuildOrder | O(m log m) | m = total captured messages |
@@ -377,8 +483,10 @@ Download path:
 ### Limitations
 
 - Depends on Instagram's current DOM structure (class names `x5slmwz` / `x88qbow`), needs selector updates after page redesigns
+- Multimedia detection relies on SVG `aria-label` attributes, which may change with Instagram's i18n
 - Nodes recycled by virtual scrolling may be GC'd from WeakSet — but data already in orderedLog is unaffected
 - Requires manual scrolling through the entire conversation to capture all messages
+- Image/video URLs are temporary CDN links that may expire
 
 ## License
 
