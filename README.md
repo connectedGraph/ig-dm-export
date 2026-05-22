@@ -2,7 +2,7 @@
 
 [English](#english) | [中文](#中文)
 
-**Install from Greasy Fork:** [https://greasyfork.org/scripts/578524(https://greasyfork.org/scripts/578524)
+**Install from Greasy Fork:** [https://greasyfork.org/scripts/578524](https://greasyfork.org/scripts/578524)
 
 ---
 
